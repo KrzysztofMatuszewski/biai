@@ -1,0 +1,134 @@
+<!-- templates/predict.html -->
+{% extends "base.html" %}
+
+{% block title %}Prediction - Pet Adoption Predictor{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header bg-primary text-white text-center">
+                <h2><i class="fas fa-search me-2"></i>Adoption Time Prediction</h2>
+            </div>
+            <div class="card-body p-4">
+                <form method="POST">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="type" class="form-label">Pet Type *</label>
+                            <select class="form-select" id="type" name="type" required>
+                                <option value="">Select type</option>
+                                <option value="Dog">Dog</option>
+                                <option value="Cat">Cat</option>
+                            </select>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="age" class="form-label">Age (in months) *</label>
+                            <input type="number" class="form-control" id="age" name="age" min="0" max="300" required>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="breed" class="form-label">Breed *</label>
+                            <input type="text" class="form-control" id="breed" name="breed" placeholder="e.g. Labrador, Persian" required>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="gender" class="form-label">Gender *</label>
+                            <select class="form-select" id="gender" name="gender" required>
+                                <option value="">Select gender</option>
+                                <option value="Male">Male</option>
+                                <option value="Female">Female</option>
+                            </select>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="color1" class="form-label">Primary Color *</label>
+                            <input type="text" class="form-control" id="color1" name="color1" placeholder="e.g. Brown, Black" required>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="color2" class="form-label">Secondary Color</label>
+                            <input type="text" class="form-control" id="color2" name="color2" placeholder="e.g. White, Yellow">
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="size" class="form-label">Maturity Size *</label>
+                            <select class="form-select" id="size" name="size" required>
+                                <option value="">Select size</option>
+                                <option value="Small">Small</option>
+                                <option value="Medium">Medium</option>
+                                <option value="Large">Large</option>
+                                <option value="Extra Large">Extra Large</option>
+                                <option value="Not Specified">Not Specified</option>
+                            </select>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="fur" class="form-label">Fur Length *</label>
+                            <select class="form-select" id="fur" name="fur" required>
+                                <option value="">Select fur length</option>
+                                <option value="Short">Short</option>
+                                <option value="Medium">Medium</option>
+                                <option value="Long">Long</option>
+                                <option value="Not Specified">Not Specified</option>
+                            </select>
+                        </div>
+
+                        <div class="col-md-4">
+                            <label for="vaccinated" class="form-label">Vaccinated *</label>
+                            <select class="form-select" id="vaccinated" name="vaccinated" required>
+                                <option value="">Vaccination status</option>
+                                <option value="Yes">Yes</option>
+                                <option value="No">No</option>
+                                <option value="Not Sure">Not Sure</option>
+                            </select>
+                        </div>
+
+                        <div class="col-md-4">
+                            <label for="sterilized" class="form-label">Sterilized *</label>
+                            <select class="form-select" id="sterilized" name="sterilized" required>
+                                <option value="">Sterilization status</option>
+                                <option value="Yes">Yes</option>
+                                <option value="No">No</option>
+                                <option value="Not Sure">Not Sure</option>
+                            </select>
+                        </div>
+
+                        <div class="col-md-4">
+                            <label for="health" class="form-label">Health *</label>
+                            <select class="form-select" id="health" name="health" required>
+                                <option value="">Select health status</option>
+                                <option value="Healthy">Healthy</option>
+                                <option value="Minor Injury">Minor Issues</option>
+                                <option value="Serious Injury">Serious Issues</option>
+                                <option value="Not Specified">Not Specified</option>
+                            </select>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="fee" class="form-label">Adoption Fee *</label>
+                            <input type="number" class="form-control" id="fee" name="fee" min="0" step="0.01" placeholder="0.00" required>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label for="photos" class="form-label">Number of Photos *</label>
+                            <input type="number" class="form-control" id="photos" name="photos" min="0" max="50" placeholder="0" required>
+                        </div>
+
+                        <div class="col-12">
+                            <label for="description" class="form-label">Pet Description</label>
+                            <textarea class="form-control" id="description" name="description" rows="4" placeholder="Describe the pet, its character, preferences..."></textarea>
+                        </div>
+
+                        <div class="col-12 text-center mt-4">
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="fas fa-magic me-2"></i>Predict Adoption Time
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

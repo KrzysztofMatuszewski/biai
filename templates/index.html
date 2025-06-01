@@ -1,0 +1,66 @@
+<!-- templates/index.html -->
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-10">
+        <div class="text-center text-white mb-5">
+            <h1 class="display-4 fw-bold mb-3">
+                <i class="fas fa-paw me-3"></i>Pet Adoption Speed Predictor
+            </h1>
+            <p class="lead">Predict how quickly a pet will find a new home using artificial intelligence</p>
+            <p class="mt-3">
+                <a href="https://www.kaggle.com/competitions/petfinder-adoption-prediction" 
+                   target="_blank" 
+                   class="text-white text-decoration-none">
+                    <i class="fas fa-external-link-alt me-2"></i>More here
+                </a>
+            </p>
+        </div>
+
+        <div class="row g-4 justify-content-center">
+            <div class="col-md-8">
+                <div class="card h-100 text-center">
+                    <div class="card-body p-5">
+                        <i class="fas fa-search feature-icon"></i>
+                        <h3 class="card-title">Adoption Speed Prediction</h3>
+                        <p class="card-text">Enter pet data and receive adoption time prediction along with probability analysis for each time category.</p>
+                        <a href="{{ url_for('predict') }}" class="btn btn-primary btn-lg">
+                            <i class="fas fa-arrow-right me-2"></i>Start Prediction
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-5">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-body p-5">
+                        <h3 class="text-center mb-4">
+                            <i class="fas fa-info-circle me-2"></i>How does it work?
+                        </h3>
+                        <div class="row g-4">
+                            <div class="col-md-4 text-center">
+                                <i class="fas fa-database feature-icon"></i>
+                                <h5>Data Analysis</h5>
+                                <p>The model analyzes pet characteristics like age, breed, health status, vaccinations and many others.</p>
+                            </div>
+                            <div class="col-md-4 text-center">
+                                <i class="fas fa-brain feature-icon"></i>
+                                <h5>Artificial Intelligence</h5>
+                                <p>We use a neural network trained on thousands of pet adoption cases.</p>
+                            </div>
+                            <div class="col-md-4 text-center">
+                                <i class="fas fa-chart-bar feature-icon"></i>
+                                <h5>Prediction</h5>
+                                <p>You receive adoption time classification from "same day" to "no adoption after 100 days".</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

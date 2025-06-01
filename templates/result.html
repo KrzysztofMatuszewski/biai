@@ -1,0 +1,123 @@
+<!-- templates/result.html -->
+{% extends "base.html" %}
+
+{% block title %}Prediction Result - Pet Adoption Predictor{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-10">
+        <div class="card">
+            <div class="card-header bg-success text-white text-center">
+                <h2><i class="fas fa-chart-line me-2"></i>Prediction Result</h2>
+            </div>
+            <div class="card-body p-4">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="text-center mb-4">
+                            <div class="display-1 text-primary mb-3">
+                                <i class="fas fa-clock"></i>
+                            </div>
+                            <h3 class="text-primary">Predicted adoption time:</h3>
+                            <h2 class="text-success fw-bold">{{ result.predicted_label }}</h2>
+                            <p class="text-muted">Confidence: {{ "%.1f"|format(result.confidence * 100) }}%</p>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <h4 class="mb-3">Probabilities for each class:</h4>
+                        {% set class_labels = {
+                            'Class 0': 'Same day',
+                            'Class 1': '1-7 days',
+                            'Class 2': '8-30 days',
+                            'Class 3': '31-90 days',
+                            'Class 4': 'No adoption after 100 days'
+                        } %}
+                        
+                        {% for class_name, probability in result.probabilities.items() %}
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <span class="fw-medium">{{ class_labels[class_name] }}</span>
+                                <span class="text-primary fw-bold">{{ "%.1f"|format(probability * 100) }}%</span>
+                            </div>
+                            <div class="progress">
+                                <div class="progress-bar 
+                                    {% if class_name == 'Class ' + result.predicted_class|string %}bg-success{% else %}bg-secondary{% endif %}"
+                                     role="progressbar" 
+                                     style="width: {{ probability * 100 }}%"
+                                     aria-valuenow="{{ probability * 100 }}" 
+                                     aria-valuemin="0" 
+                                     aria-valuemax="100">
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <hr class="my-4">
+
+                <div class="row">
+                    <div class="col-12">
+                        <h4 class="mb-3">Input data:</h4>
+                        <div class="row g-3">
+                            <div class="col-md-3">
+                                <strong>Type:</strong> {{ input_data.type }}
+                            </div>
+                            <div class="col-md-3">
+                                <strong>Age:</strong> {{ input_data.age }} months
+                            </div>
+                            <div class="col-md-3">
+                                <strong>Breed:</strong> {{ input_data.breed }}
+                            </div>
+                            <div class="col-md-3">
+                                <strong>Gender:</strong> {{ input_data.gender }}
+                            </div>
+                            <div class="col-md-3">
+                                <strong>Primary Color:</strong> {{ input_data.color1 }}
+                            </div>
+                            <div class="col-md-3">
+                                <strong>Secondary Color:</strong> {{ input_data.color2 or 'None' }}
+                            </div>
+                            <div class="col-md-3">
+                                <strong>Size:</strong> {{ input_data.size }}
+                            </div>
+                            <div class="col-md-3">
+                                <strong>Fur Length:</strong> {{ input_data.fur }}
+                            </div>
+                            <div class="col-md-3">
+                                <strong>Vaccinated:</strong> {{ input_data.vaccinated }}
+                            </div>
+                            <div class="col-md-3">
+                                <strong>Sterilized:</strong> {{ input_data.sterilized }}
+                            </div>
+                            <div class="col-md-3">
+                                <strong>Health:</strong> {{ input_data.health }}
+                            </div>
+                            <div class="col-md-3">
+                                <strong>Fee:</strong> {{ input_data.fee }}
+                            </div>
+                            <div class="col-md-6">
+                                <strong>Number of Photos:</strong> {{ input_data.photos }}
+                            </div>
+                            {% if input_data.description %}
+                            <div class="col-12">
+                                <strong>Description:</strong> {{ input_data.description }}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="text-center mt-4">
+                    <a href="{{ url_for('predict') }}" class="btn btn-primary me-3">
+                        <i class="fas fa-plus me-2"></i>New Prediction
+                    </a>
+                    <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+                        <i class="fas fa-home me-2"></i>Home
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
