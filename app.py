@@ -280,6 +280,11 @@ def health_check():
         'model_loaded': model_loaded
     })
 
+@app.route('/presentation')
+def presentation():
+    """Render the presentation page"""
+    return render_template('presentation.html')
+
 if __name__ == '__main__':
     # Load model components on startup
     if load_model_components():
