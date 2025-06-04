@@ -7,8 +7,7 @@ import joblib
 import nltk
 from nltk.sentiment import SentimentIntensityAnalyzer
 import re
-import json
-import os
+import hashlib
 from tensorflow.keras.models import load_model
 
 # Download NLTK resources
@@ -23,28 +22,38 @@ app.secret_key = 'your-secret-key-here'  # Change this in production
 
 # Global variables for model components
 model = None
-preprocessor = None
+components = None
 metadata = None
 
 def load_model_components():
     """Load the trained model and preprocessing components"""
-    global model, preprocessor, metadata
+    global model, components, metadata
     
     try:
-        model = load_model('best_model.h5')
-        preprocessor = joblib.load('pet_adoption_preprocessor.joblib')
-        metadata = joblib.load('pet_adoption_metadata.joblib')
+        # Load hash-encoded model components
+        model = load_model('best_hash_model.h5')
+        components = joblib.load('hash_preprocessing_components.joblib')
+        metadata = joblib.load('hash_model_metadata.joblib')
+        print("Successfully loaded hash-encoded model components")
         return True
     except Exception as e:
         print(f"Error loading model components: {e}")
         return False
+
+def string_to_hash_int(text, max_value=1000):
+    """Convert string to integer using hash function"""
+    if pd.isna(text) or text == '' or text == 'nan':
+        return 0
+    
+    hash_object = hashlib.md5(str(text).encode())
+    hash_int = int(hash_object.hexdigest(), 16) % max_value
+    return hash_int
 
 def extract_text_features(text):
     """Extract features from the pet description text"""
     try:
         sia = SentimentIntensityAnalyzer()
     except:
-        # Fallback if NLTK resources are not available
         return {
             'desc_length': len(text) if text else 0,
             'word_count': len(text.split()) if text else 0,
@@ -69,15 +78,15 @@ def extract_text_features(text):
         }
     
     # Length features
-    desc_length = len(text)
-    word_count = len(text.split())
+    desc_length = len(str(text))
+    word_count = len(str(text).split())
     
     # Sentiment analysis
-    sentiment = sia.polarity_scores(text)
+    sentiment = sia.polarity_scores(str(text))
     
     # Check for specific content
-    has_contact = 1 if re.search(r'\b(?:call|contact|phone|email)\b', text.lower()) else 0
-    has_health_mention = 1 if re.search(r'\b(?:healthy|vaccinated|neutered|spayed|dewormed)\b', text.lower()) else 0
+    has_contact = 1 if re.search(r'\b(?:call|contact|phone|email)\b', str(text).lower()) else 0
+    has_health_mention = 1 if re.search(r'\b(?:healthy|vaccinated|neutered|spayed|dewormed)\b', str(text).lower()) else 0
     
     return {
         'desc_length': desc_length,
@@ -90,107 +99,143 @@ def extract_text_features(text):
         'has_health_mention': has_health_mention
     }
 
-def create_derived_features(df):
-    """Create derived features for the prediction"""
-    # Interaction features
-    df['Age_Health_Interaction'] = df['Age'] * df['Health']
-    df['Vaccinated_Sterilized'] = df['Vaccinated'].astype(str) + '_' + df['Sterilized'].astype(str)
-    df['Size_FurLength'] = df['MaturitySize'].astype(str) + '_' + df['FurLength'].astype(str)
-    df['Price_Per_Photo'] = df['Fee'] / (df['PhotoAmt'] + 1)  # Avoid division by zero
+def create_interaction_features_hash(df):
+    """Create interaction features using hash encoding"""
+    df_new = df.copy()
     
-    # Log transformations
+    # Create age groups
+    df_new['Age_Group'] = pd.cut(df_new['Age'], 
+                                bins=[0, 3, 12, 36, 72, float('inf')], 
+                                labels=['Baby', 'Young', 'Adult', 'Middle', 'Senior'])
+    
+    # Create health status groups
+    df_new['Health_Status'] = df_new['Health']
+    
+    # Create interaction features
+    interaction_combinations = [
+        ('Vaccinated', 'Sterilized'),
+        ('MaturitySize', 'FurLength'),
+        ('Type', 'Breed1'),
+        ('Color1', 'Color2'),
+        ('Gender', 'MaturitySize'),
+        ('Age_Group', 'Health_Status')
+    ]
+    
+    for col1, col2 in interaction_combinations:
+        if col1 in df_new.columns and col2 in df_new.columns:
+            interaction_name = f'{col1}_{col2}_hash'
+            combined = df_new[col1].astype(str) + '_' + df_new[col2].astype(str)
+            df_new[interaction_name] = combined.apply(lambda x: string_to_hash_int(x, 1000))
+    
+    return df_new
+
+def prepare_all_features(df):
+    """Prepare all features including text features, interactions, and transformations"""
+    # Extract text features from Description
+    if 'Description' in df.columns:
+        text_features = df['Description'].apply(extract_text_features).apply(pd.Series)
+        df = pd.concat([df, text_features], axis=1)
+    
+    # Create basic mathematical features
+    df['Age_Health_Product'] = df['Age'] * pd.to_numeric(df['Health'], errors='coerce').fillna(1)
+    df['Price_Per_Photo'] = df['Fee'] / (df['PhotoAmt'] + 1)
     df['PhotoAmt_Log'] = np.log1p(df['PhotoAmt'])
     df['Fee_Log'] = np.log1p(df['Fee'])
     
+    # Create categorical groupings before hashing
+    df = create_interaction_features_hash(df)
+    
+    # Create premium indicator
+    health_numeric = pd.to_numeric(df['Health'], errors='coerce').fillna(0)
+    vaccinated_numeric = pd.to_numeric(df['Vaccinated'], errors='coerce').fillna(0)
+    sterilized_numeric = pd.to_numeric(df['Sterilized'], errors='coerce').fillna(0)
+    
+    df['Is_Premium'] = ((health_numeric == 1) & 
+                        (vaccinated_numeric == 1) & 
+                        (sterilized_numeric == 1)).astype(int)
+    
     return df
 
-def convert_categorical_values(data):
-    """Convert string categorical values to numeric codes expected by the model"""
-    # Mapping dictionaries for categorical variables
-    type_map = {'Dog': 1, 'Cat': 2}
-    gender_map = {'Male': 1, 'Female': 2, 'Mixed': 3}
-    size_map = {'Small': 1, 'Medium': 2, 'Large': 3, 'Extra Large': 4, 'Not Specified': 0}
-    fur_map = {'Short': 1, 'Medium': 2, 'Long': 3, 'Not Specified': 0}
-    yesno_map = {'Yes': 1, 'No': 2, 'Not Sure': 3, 'Not Specified': 0}
-    health_map = {'Healthy': 1, 'Minor Injury': 2, 'Serious Injury': 3, 'Not Specified': 0}
+def apply_hash_encoding_with_mappings(df, hash_mappings, categorical_columns):
+    """Apply hash encoding using saved mappings from training"""
+    df_encoded = df.copy()
     
-    # Apply mappings
-    data_copy = data.copy()
+    for col in categorical_columns:
+        if col in df_encoded.columns and col in hash_mappings:
+            def safe_map(value):
+                if value in hash_mappings[col]:
+                    return hash_mappings[col][value]
+                else:
+                    return string_to_hash_int(str(value), 1000)
+            
+            df_encoded[col] = df_encoded[col].apply(safe_map)
     
-    if 'Type' in data_copy and isinstance(data_copy['Type'], str):
-        data_copy['Type'] = type_map.get(data_copy['Type'], data_copy['Type'])
-    
-    if 'Gender' in data_copy and isinstance(data_copy['Gender'], str):
-        data_copy['Gender'] = gender_map.get(data_copy['Gender'], data_copy['Gender'])
-    
-    if 'MaturitySize' in data_copy and isinstance(data_copy['MaturitySize'], str):
-        data_copy['MaturitySize'] = size_map.get(data_copy['MaturitySize'], data_copy['MaturitySize'])
-    
-    if 'FurLength' in data_copy and isinstance(data_copy['FurLength'], str):
-        data_copy['FurLength'] = fur_map.get(data_copy['FurLength'], data_copy['FurLength'])
-    
-    if 'Vaccinated' in data_copy and isinstance(data_copy['Vaccinated'], str):
-        data_copy['Vaccinated'] = yesno_map.get(data_copy['Vaccinated'], data_copy['Vaccinated'])
-    
-    if 'Sterilized' in data_copy and isinstance(data_copy['Sterilized'], str):
-        data_copy['Sterilized'] = yesno_map.get(data_copy['Sterilized'], data_copy['Sterilized'])
-    
-    if 'Health' in data_copy and isinstance(data_copy['Health'], str):
-        data_copy['Health'] = health_map.get(data_copy['Health'], data_copy['Health'])
-    
-    return data_copy
+    return df_encoded
 
-def preprocess_input(input_data, include_desc_features=True):
-    """
-    Preprocess the input data for prediction
+def preprocess_input_for_prediction(input_data):
+    """Preprocess input data for prediction using saved components"""
+    global components
     
-    Parameters:
-    input_data (dict or pd.DataFrame): Input data containing pet information
-    include_desc_features (bool): Whether to extract features from Description
-    
-    Returns:
-    pd.DataFrame: Preprocessed data ready for model prediction
-    """
-    # Convert dict to DataFrame if necessary
+    # Convert to DataFrame if needed
     if isinstance(input_data, dict):
         df = pd.DataFrame([input_data])
     else:
         df = input_data.copy()
     
-    # Extract text features if Description is present and include_desc_features is True
-    if 'Description' in df.columns and include_desc_features:
-        text_features = df['Description'].apply(extract_text_features).apply(pd.Series)
-        df = pd.concat([df, text_features], axis=1)
-        df = df.drop('Description', axis=1)
+    # Fill missing values
+    numeric_cols_raw = ['Age', 'Fee', 'PhotoAmt']
+    for col in numeric_cols_raw:
+        if col in df.columns:
+            df[col] = df[col].fillna(df[col].median() if not df[col].empty else 0)
     
-    # Create derived features
-    df = create_derived_features(df)
+    categorical_cols_raw = ['Type', 'Breed1', 'Gender', 'Color1', 'Color2', 
+                           'MaturitySize', 'FurLength', 'Vaccinated', 
+                           'Sterilized', 'Health']
+    for col in categorical_cols_raw:
+        if col in df.columns:
+            df[col] = df[col].fillna('Unknown')
     
-    return df
+    if 'Description' in df.columns:
+        df['Description'] = df['Description'].fillna('')
+    
+    # Apply same feature engineering as training
+    df_processed = prepare_all_features(df)
+    
+    # Apply hash encoding using saved mappings
+    df_encoded = apply_hash_encoding_with_mappings(
+        df_processed, 
+        components['hash_mappings'], 
+        components['categorical_columns']
+    )
+    
+    # Select same features as training
+    try:
+        X_new = df_encoded[components['feature_columns']]
+    except KeyError as e:
+        missing_cols = set(components['feature_columns']) - set(df_encoded.columns)
+        print(f"Missing columns: {missing_cols}")
+        for col in missing_cols:
+            df_encoded[col] = 0
+        X_new = df_encoded[components['feature_columns']]
+    
+    # Apply preprocessing
+    X_imputed = components['imputer'].transform(X_new)
+    X_scaled = components['scaler'].transform(X_imputed)
+    
+    return X_scaled
 
 def predict_adoption_speed(input_data):
-    """
-    Predict adoption speed for new pet data
+    """Predict adoption speed for new pet data"""
+    global model, components, metadata
     
-    Parameters:
-    input_data (dict or pd.DataFrame): Input data containing pet information
-    
-    Returns:
-    dict: Prediction results with class and probabilities
-    """
-    global model, preprocessor, metadata
-    
-    if model is None or preprocessor is None:
+    if model is None or components is None:
         raise Exception("Model not loaded. Please check if model files exist.")
     
     # Preprocess input
-    preprocessed_data = preprocess_input(input_data)
-    
-    # Transform input with preprocessor
-    X_processed = preprocessor.transform(preprocessed_data)
+    X_processed = preprocess_input_for_prediction(input_data)
     
     # Make prediction
-    pred_proba = model.predict(X_processed)
+    pred_proba = model.predict(X_processed, verbose=0)
     pred_class = np.argmax(pred_proba, axis=1)
     
     # Create result dictionary
@@ -202,17 +247,14 @@ def predict_adoption_speed(input_data):
         4: "No adoption after 100 days"
     }
     
-    results = []
-    for i, pred in enumerate(pred_class):
-        result = {
-            'predicted_class': int(pred),
-            'predicted_label': adoption_speed_map[pred],
-            'probabilities': {f'Class {j}': float(pred_proba[i][j]) for j in range(5)},
-            'confidence': float(np.max(pred_proba[i]))
-        }
-        results.append(result)
+    result = {
+        'predicted_class': int(pred_class[0]),
+        'predicted_label': adoption_speed_map[pred_class[0]],
+        'probabilities': {f'Class {j}': float(pred_proba[0][j]) for j in range(5)},
+        'confidence': float(np.max(pred_proba[0]))
+    }
     
-    return results[0] if len(results) == 1 else results
+    return result
 
 @app.route('/')
 def index():
@@ -242,9 +284,6 @@ def predict():
             'Description': request.form.get('description', '')
         }
         
-        # Convert categorical values
-        input_data = convert_categorical_values(input_data)
-        
         # Make prediction
         result = predict_adoption_speed(input_data)
         
@@ -259,13 +298,7 @@ def api_predict():
     """API endpoint for predictions"""
     try:
         data = request.get_json()
-        
-        # Convert categorical values
-        data = convert_categorical_values(data)
-        
-        # Make prediction
         result = predict_adoption_speed(data)
-        
         return jsonify({'success': True, 'result': result})
         
     except Exception as e:
@@ -274,10 +307,11 @@ def api_predict():
 @app.route('/health')
 def health_check():
     """Health check endpoint"""
-    model_loaded = model is not None and preprocessor is not None
+    model_loaded = model is not None and components is not None
     return jsonify({
         'status': 'healthy' if model_loaded else 'unhealthy',
-        'model_loaded': model_loaded
+        'model_loaded': model_loaded,
+        'model_type': 'hash'
     })
 
 @app.route('/presentation')
@@ -286,12 +320,11 @@ def presentation():
     return render_template('presentation.html')
 
 if __name__ == '__main__':
-    # Load model components on startup
     if load_model_components():
-        print("Model components loaded successfully!")
+        print("Hash model components loaded successfully!")
         app.run(debug=True, host='0.0.0.0', port=5000)
     else:
         print("Failed to load model components. Please ensure model files exist:")
-        print("- best_model.h5")
-        print("- pet_adoption_preprocessor.joblib")
-        print("- pet_adoption_metadata.joblib")
+        print("- best_hash_model.h5")
+        print("- hash_preprocessing_components.joblib")
+        print("- hash_model_metadata.joblib")

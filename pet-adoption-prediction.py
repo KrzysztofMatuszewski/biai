@@ -11,22 +11,18 @@ import json
 import hashlib
 from tensorflow.keras.models import load_model
 
-# Download NLTK resources (uncomment if needed)
+# Download NLTK resources
 try:
     nltk.download('vader_lexicon', quiet=True)
     nltk.download('stopwords', quiet=True)
 except:
     pass
 
-def string_to_hash_int(text, max_value=10000):
-    """
-    Convert string to integer using hash function
-    Must be identical to training function!
-    """
+def string_to_hash_int(text, max_value=1000):
+    """Convert string to integer using hash function"""
     if pd.isna(text) or text == '' or text == 'nan':
         return 0
     
-    # Convert to string and create hash
     hash_object = hashlib.md5(str(text).encode())
     hash_int = int(hash_object.hexdigest(), 16) % max_value
     return hash_int
@@ -45,7 +41,6 @@ def extract_text_features(text):
             'has_health_mention': 0
         }
     
-    # Initialize sentiment analyzer
     sia = SentimentIntensityAnalyzer()
     
     # Length features
@@ -71,13 +66,10 @@ def extract_text_features(text):
     }
 
 def create_interaction_features_hash(df):
-    """
-    Create interaction features using hash encoding
-    Must be identical to training function!
-    """
+    """Create interaction features using hash encoding"""
     df_new = df.copy()
     
-    # Create age groups (exactly same as training)
+    # Create age groups
     df_new['Age_Group'] = pd.cut(df_new['Age'], 
                                 bins=[0, 3, 12, 36, 72, float('inf')], 
                                 labels=['Baby', 'Young', 'Adult', 'Middle', 'Senior'])
@@ -85,7 +77,7 @@ def create_interaction_features_hash(df):
     # Create health status groups
     df_new['Health_Status'] = df_new['Health']
     
-    # Create interaction features (exactly same combinations as training)
+    # Create interaction features
     interaction_combinations = [
         ('Vaccinated', 'Sterilized'),
         ('MaturitySize', 'FurLength'),
@@ -95,37 +87,31 @@ def create_interaction_features_hash(df):
         ('Age_Group', 'Health_Status')
     ]
     
-    # Create interaction features
     for col1, col2 in interaction_combinations:
         if col1 in df_new.columns and col2 in df_new.columns:
             interaction_name = f'{col1}_{col2}_hash'
-            # Combine values and hash
             combined = df_new[col1].astype(str) + '_' + df_new[col2].astype(str)
             df_new[interaction_name] = combined.apply(lambda x: string_to_hash_int(x, 1000))
     
     return df_new
 
 def prepare_all_features(df):
-    """
-    Prepare all features including text features, interactions, and transformations
-    Must be identical to training function!
-    """
-    # 1. Extract text features from Description
+    """Prepare all features including text features, interactions, and transformations"""
+    # Extract text features from Description
     if 'Description' in df.columns:
         text_features = df['Description'].apply(extract_text_features).apply(pd.Series)
         df = pd.concat([df, text_features], axis=1)
     
-    # 2. Create basic mathematical features
+    # Create basic mathematical features
     df['Age_Health_Product'] = df['Age'] * pd.to_numeric(df['Health'], errors='coerce').fillna(1)
-    df['Price_Per_Photo'] = df['Fee'] / (df['PhotoAmt'] + 1)  # Avoid division by zero
+    df['Price_Per_Photo'] = df['Fee'] / (df['PhotoAmt'] + 1)
     df['PhotoAmt_Log'] = np.log1p(df['PhotoAmt'])
     df['Fee_Log'] = np.log1p(df['Fee'])
     
-    # 3. Create categorical groupings before hashing
+    # Create categorical groupings before hashing
     df = create_interaction_features_hash(df)
     
-    # 4. Create premium indicator
-    # Convert categorical health to numeric for comparison
+    # Create premium indicator
     health_numeric = pd.to_numeric(df['Health'], errors='coerce').fillna(0)
     vaccinated_numeric = pd.to_numeric(df['Vaccinated'], errors='coerce').fillna(0)
     sterilized_numeric = pd.to_numeric(df['Sterilized'], errors='coerce').fillna(0)
@@ -137,52 +123,30 @@ def prepare_all_features(df):
     return df
 
 def apply_hash_encoding_with_mappings(df, hash_mappings, categorical_columns):
-    """
-    Apply hash encoding using saved mappings from training
-    
-    Parameters:
-    df (pd.DataFrame): Input dataframe
-    hash_mappings (dict): Saved hash mappings from training
-    categorical_columns (list): List of categorical columns
-    
-    Returns:
-    pd.DataFrame: Hash encoded dataframe
-    """
+    """Apply hash encoding using saved mappings from training"""
     df_encoded = df.copy()
     
     for col in categorical_columns:
         if col in df_encoded.columns and col in hash_mappings:
-            # Apply saved hash mappings
             def safe_map(value):
-                # If value exists in mapping, use it
                 if value in hash_mappings[col]:
                     return hash_mappings[col][value]
-                # If new value, hash it with same parameters
                 else:
-                    return string_to_hash_int(str(value), 1000)  # Use same hash_size as training
+                    return string_to_hash_int(str(value), 1000)
             
             df_encoded[col] = df_encoded[col].apply(safe_map)
     
     return df_encoded
 
 def preprocess_input_for_prediction(input_data, components):
-    """
-    Preprocess input data for prediction using saved components
-    
-    Parameters:
-    input_data (dict or pd.DataFrame): Input data
-    components (dict): Saved preprocessing components
-    
-    Returns:
-    np.ndarray: Preprocessed data ready for model
-    """
+    """Preprocess input data for prediction using saved components"""
     # Convert to DataFrame if needed
     if isinstance(input_data, dict):
         df = pd.DataFrame([input_data])
     else:
         df = input_data.copy()
     
-    # Fill missing values (same strategy as training)
+    # Fill missing values
     numeric_cols_raw = ['Age', 'Fee', 'PhotoAmt']
     for col in numeric_cols_raw:
         if col in df.columns:
@@ -214,12 +178,11 @@ def preprocess_input_for_prediction(input_data, components):
     except KeyError as e:
         missing_cols = set(components['feature_columns']) - set(df_encoded.columns)
         print(f"Missing columns: {missing_cols}")
-        # Create missing columns with default values
         for col in missing_cols:
             df_encoded[col] = 0
         X_new = df_encoded[components['feature_columns']]
     
-    # Apply same preprocessing
+    # Apply preprocessing
     X_imputed = components['imputer'].transform(X_new)
     X_scaled = components['scaler'].transform(X_imputed)
     
@@ -229,18 +192,7 @@ def predict_adoption_speed_hash(input_data,
                                model_path='best_hash_model.h5',
                                components_path='hash_preprocessing_components.joblib',
                                metadata_path='hash_model_metadata.joblib'):
-    """
-    Predict adoption speed using hash-encoded model
-    
-    Parameters:
-    input_data (dict or pd.DataFrame): Input pet data
-    model_path (str): Path to saved model
-    components_path (str): Path to preprocessing components
-    metadata_path (str): Path to model metadata
-    
-    Returns:
-    dict: Prediction results
-    """
+    """Predict adoption speed using hash-encoded model"""
     # Load all components
     model = load_model(model_path)
     components = joblib.load(components_path)
@@ -276,13 +228,7 @@ def batch_predict_hash(input_file, output_file,
                       model_path='best_hash_model.h5',
                       components_path='hash_preprocessing_components.joblib',
                       metadata_path='hash_model_metadata.joblib'):
-    """
-    Make batch predictions from CSV file using hash model
-    
-    Parameters:
-    input_file (str): Path to input CSV
-    output_file (str): Path to output CSV
-    """
+    """Make batch predictions from CSV file using hash model"""
     # Read input data
     input_df = pd.read_csv(input_file)
     print(f"Loaded {len(input_df)} rows for prediction")
@@ -299,7 +245,6 @@ def batch_predict_hash(input_file, output_file,
                 print(f"Processed {i + 1} rows...")
         except Exception as e:
             print(f"Error processing row {i}: {e}")
-            # Add default prediction for failed rows
             predictions.append({
                 'predicted_class': -1,
                 'predicted_label': 'Error',
@@ -394,11 +339,8 @@ def main():
     else:
         parser.print_help()
 
-# Example usage function
 def example_prediction():
     """Example of how to use the hash prediction function"""
-    
-    # Example pet data
     example_pet = {
         'Type': 'Dog',
         'Age': 12,
