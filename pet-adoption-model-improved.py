@@ -327,16 +327,10 @@ def create_hash_model(input_shape, num_classes):
     inputs = keras.Input(shape=(input_shape,))
     
     # First layer - larger since we have hash-encoded features
-    x = layers.Dense(512, activation='relu', 
+    x = layers.Dense(256, activation='relu', 
                      kernel_regularizer=regularizers.l2(0.001))(inputs)
     x = layers.BatchNormalization()(x)
     x = layers.Dropout(0.5)(x)
-    
-    # Second layer
-    x = layers.Dense(256, activation='relu', 
-                     kernel_regularizer=regularizers.l2(0.001))(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.Dropout(0.4)(x)
     
     # Third layer
     x = layers.Dense(128, activation='relu', 
@@ -356,7 +350,7 @@ def create_hash_model(input_shape, num_classes):
     model = keras.Model(inputs=inputs, outputs=outputs)
     
     model.compile(
-        optimizer=keras.optimizers.Adam(learning_rate=0.001),
+        optimizer=keras.optimizers.AdamW(learning_rate=0.001),
         loss='categorical_crossentropy',
         metrics=['accuracy']
     )
@@ -559,3 +553,384 @@ def predict_with_hash_model(new_data, model_path='best_hash_model.h5'):
     return result
 
 print("\nHash-encoded model ready for predictions!")
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import LabelEncoder
+import warnings
+warnings.filterwarnings('ignore')
+
+# Zakładając, że masz już załadowane dane z pliku 'petfinder.csv'
+# data = pd.read_csv('petfinder.csv')
+
+# Funkcja do przygotowania danych do analizy korelacji
+def prepare_data_for_correlation(data):
+    """
+    Przygotowuje dane do analizy korelacji - konwertuje kategoryczne na numeryczne
+    """
+    df_corr = data.copy()
+    
+    # Lista kolumn kategorycznych do zakodowania
+    categorical_columns = ['Type', 'Breed1', 'Gender', 'Color1', 'Color2', 
+                          'MaturitySize', 'FurLength', 'Vaccinated', 
+                          'Sterilized', 'Health']
+    
+    # Encoder dla zmiennych kategorycznych
+    label_encoders = {}
+    
+    for col in categorical_columns:
+        if col in df_corr.columns:
+            le = LabelEncoder()
+            # Wypełnij brakujące wartości przed kodowaniem
+            df_corr[col] = df_corr[col].fillna('Unknown')
+            df_corr[col] = le.fit_transform(df_corr[col].astype(str))
+            label_encoders[col] = le
+    
+    # Wypełnij brakujące wartości numeryczne
+    numeric_cols = ['Age', 'Fee', 'PhotoAmt']
+    for col in numeric_cols:
+        if col in df_corr.columns:
+            df_corr[col] = df_corr[col].fillna(df_corr[col].median())
+    
+    return df_corr, label_encoders
+
+# Funkcje do ekstraktowania cech tekstowych (uproszczona wersja)
+def extract_text_features_simple(text):
+    """Ekstraktuje cechy z tekstu opisu zwierzęcia"""
+    if pd.isna(text) or text == '':
+        return pd.Series({
+            'desc_length': 0,
+            'word_count': 0,
+            'has_contact': 0,
+            'has_health_mention': 0
+        })
+    
+    # Podstawowe cechy tekstowe
+    desc_length = len(str(text))
+    word_count = len(str(text).split())
+    
+    # Sprawdzenie konkretnej zawartości
+    import re
+    has_contact = 1 if re.search(r'\b(?:call|contact|phone|email)\b', str(text).lower()) else 0
+    has_health_mention = 1 if re.search(r'\b(?:healthy|vaccinated|neutered|spayed|dewormed)\b', str(text).lower()) else 0
+    
+    return pd.Series({
+        'desc_length': desc_length,
+        'word_count': word_count,
+        'has_contact': has_contact,
+        'has_health_mention': has_health_mention
+    })
+
+def create_all_network_features(data):
+    """
+    Tworzy wszystkie cechy które wchodzą do sieci neuronowej (symulacja pełnego pipeline'u)
+    """
+    df = data.copy()
+    
+    # 1. Wypełnij brakujące wartości podstawowe
+    numeric_cols_raw = ['Age', 'Fee', 'PhotoAmt']
+    for col in numeric_cols_raw:
+        if col in df.columns:
+            df[col] = df[col].fillna(df[col].median())
+    
+    categorical_cols_raw = ['Type', 'Breed1', 'Gender', 'Color1', 'Color2', 
+                           'MaturitySize', 'FurLength', 'Vaccinated', 
+                           'Sterilized', 'Health']
+    for col in categorical_cols_raw:
+        if col in df.columns:
+            df[col] = df[col].fillna('Unknown')
+    
+    if 'Description' in df.columns:
+        df['Description'] = df['Description'].fillna('')
+    
+    # 2. Ekstraktuj cechy tekstowe z opisu
+    if 'Description' in df.columns:
+        text_features = df['Description'].apply(extract_text_features_simple)
+        df = pd.concat([df, text_features], axis=1)
+    
+    # 3. Utwórz cechy matematyczne
+    df['Age_Health_Product'] = df['Age'] * pd.to_numeric(df['Health'], errors='coerce').fillna(1)
+    df['Price_Per_Photo'] = df['Fee'] / (df['PhotoAmt'] + 1)
+    df['PhotoAmt_Log'] = np.log1p(df['PhotoAmt'])
+    df['Fee_Log'] = np.log1p(df['Fee'])
+    
+    # 4. Utwórz grupy wiekowe
+    df['Age_Group'] = pd.cut(df['Age'], 
+                            bins=[0, 3, 12, 36, 72, float('inf')], 
+                            labels=[0, 1, 2, 3, 4])  # Numeryczne etykiety
+    df['Age_Group'] = df['Age_Group'].fillna(0).astype(int)
+    
+    # 5. Status zdrowia
+    df['Health_Status'] = pd.to_numeric(df['Health'], errors='coerce').fillna(0)
+    
+    # 6. Cechy interakcyjne (hash encoding symulacja)
+    # Age_Group × Health_Status
+    df['Age_Health_Interaction'] = df['Age_Group'] * 10 + df['Health_Status']
+    
+    # Type × Gender (konwertuj do numerycznych i pomnóż)
+    type_numeric = pd.Categorical(df['Type']).codes
+    gender_numeric = pd.Categorical(df['Gender']).codes
+    df['Type_Gender_Interaction'] = type_numeric * 10 + gender_numeric
+    
+    # Vaccinated × Sterilized
+    vacc_numeric = pd.to_numeric(df['Vaccinated'], errors='coerce').fillna(0)
+    ster_numeric = pd.to_numeric(df['Sterilized'], errors='coerce').fillna(0)
+    df['Vacc_Ster_Interaction'] = vacc_numeric * 10 + ster_numeric
+    
+    # 7. Wskaźnik premium
+    health_numeric = pd.to_numeric(df['Health'], errors='coerce').fillna(0)
+    df['Is_Premium'] = ((health_numeric == 1) & 
+                        (vacc_numeric == 1) & 
+                        (ster_numeric == 1)).astype(int)
+    
+    # 8. Kodowanie kategorycznych (Label Encoding)
+    label_encoders = {}
+    for col in categorical_cols_raw:
+        if col in df.columns:
+            le = LabelEncoder()
+            df[col] = le.fit_transform(df[col].astype(str))
+            label_encoders[col] = le
+    
+    return df, label_encoders
+
+# Funkcja do tworzenia wykresu korelacji
+def create_correlation_plots(data):
+    """
+    Tworzy wykresy korelacji dla WSZYSTKICH danych wejściowych sieci neuronowej
+    """
+    # Przygotuj wszystkie cechy jak w sieci neuronowej
+    df_processed, _ = create_all_network_features(data)
+    
+    # Wszystkie kolumny które wchodzą do sieci (bez Description i AdoptionSpeed)
+    network_input_columns = [
+        # Podstawowe cechy
+        'Age', 'Fee', 'PhotoAmt', 'Type', 'Breed1', 'Gender', 
+        'Color1', 'Color2', 'MaturitySize', 'FurLength', 
+        'Vaccinated', 'Sterilized', 'Health',
+        
+        # Cechy tekstowe
+        'desc_length', 'word_count', 'has_contact', 'has_health_mention',
+        
+        # Cechy matematyczne
+        'Age_Health_Product', 'Price_Per_Photo', 'PhotoAmt_Log', 'Fee_Log',
+        
+        # Cechy grupowe
+        'Age_Group', 'Health_Status',
+        
+        # Cechy interakcyjne
+        'Age_Health_Interaction', 'Type_Gender_Interaction', 'Vacc_Ster_Interaction',
+        
+        # Wskaźnik premium
+        'Is_Premium'
+    ]
+    
+    # Filtruj kolumny które rzeczywiście istnieją w danych
+    available_columns = [col for col in network_input_columns if col in df_processed.columns]
+    
+    print(f"Cechy wejściowe sieci: {len(available_columns)}")
+    print(f"Lista cech: {available_columns}")
+    
+    # Dodaj zmienną docelową jeśli istnieje
+    target_column = None
+    if 'AdoptionSpeed' in df_processed.columns:
+        available_columns.append('AdoptionSpeed')
+        target_column = 'AdoptionSpeed'
+    
+    # Wybierz dane do korelacji
+    correlation_data = df_processed[available_columns]
+    
+    # Oblicz macierz korelacji
+    correlation_matrix = correlation_data.corr()
+    
+    # Tworzenie wykresów - tylko 2 wykresy ale większe dla lepszej czytelności
+    fig, axes = plt.subplots(1, 2, figsize=(24, 12))
+    fig.suptitle(f'Analiza Korelacji WSZYSTKICH Danych Wejściowych Sieci - PetFinder\n({len(available_columns)} cech)', 
+                 fontsize=16, fontweight='bold')
+    
+    # 1. Pełna macierz korelacji z większą czcionką
+    sns.heatmap(correlation_matrix, 
+                annot=True, 
+                cmap='RdBu_r', 
+                center=0,
+                square=True,
+                fmt='.2f',
+                annot_kws={'size': 8},  # Mniejsza czcionka dla lepszej czytelności
+                cbar_kws={'shrink': 0.8},
+                ax=axes[0])
+    axes[0].set_title(f'Pełna Macierz Korelacji\n({len(correlation_matrix.columns)} x {len(correlation_matrix.columns)} cech)', 
+                      fontsize=14, fontweight='bold')
+    axes[0].tick_params(axis='x', rotation=45, labelsize=9)
+    axes[0].tick_params(axis='y', rotation=0, labelsize=9)
+    
+    # 2. Korelacje z AdoptionSpeed (jeśli istnieje)
+    if target_column and target_column in correlation_matrix.columns:
+        adoption_corr = correlation_matrix[target_column].drop(target_column).sort_values(key=abs, ascending=False)
+        
+        # Kod kolorami dla lepszej czytelności
+        colors = []
+        for x in adoption_corr.values:
+            if x > 0.3:
+                colors.append('darkblue')
+            elif x > 0.1:
+                colors.append('blue')
+            elif x > -0.1:
+                colors.append('gray')
+            elif x > -0.3:
+                colors.append('red')
+            else:
+                colors.append('darkred')
+        
+        bars = axes[1].barh(range(len(adoption_corr)), adoption_corr.values, color=colors, alpha=0.7)
+        axes[1].set_yticks(range(len(adoption_corr)))
+        axes[1].set_yticklabels(adoption_corr.index, fontsize=9)
+        axes[1].set_xlabel('Współczynnik Korelacji', fontsize=12)
+        axes[1].set_title(f'Korelacja z Szybkością Adopcji\n(posortowane według siły korelacji)', 
+                          fontsize=14, fontweight='bold')
+        axes[1].axvline(x=0, color='black', linestyle='-', alpha=0.3)
+        axes[1].axvline(x=0.3, color='blue', linestyle='--', alpha=0.5, label='Umiarkowana (+)')
+        axes[1].axvline(x=-0.3, color='red', linestyle='--', alpha=0.5, label='Umiarkowana (-)')
+        axes[1].legend()
+        
+        # Dodaj wartości na słupkach
+        for i, (bar, value) in enumerate(zip(bars, adoption_corr.values)):
+            axes[1].text(value + (0.01 if value >= 0 else -0.01), i, f'{value:.3f}', 
+                          ha='left' if value >= 0 else 'right', va='center', fontsize=8)
+        
+        # Wyświetl statystyki
+        strong_positive = sum(1 for x in adoption_corr.values if x > 0.3)
+        strong_negative = sum(1 for x in adoption_corr.values if x < -0.3)
+        axes[1].text(0.02, 0.98, f'Silne dodatnie: {strong_positive}\nSilne ujemne: {strong_negative}', 
+                     transform=axes[1].transAxes, va='top', ha='left', 
+                     bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+                     
+    else:
+        axes[1].text(0.5, 0.5, f'{target_column if target_column else "AdoptionSpeed"}\nnie znalezione\nw danych', 
+                       ha='center', va='center', transform=axes[1].transAxes, fontsize=12)
+        axes[1].set_title('Korelacja z Szybkością Adopcji', fontsize=14, fontweight='bold')
+    
+    plt.tight_layout()
+    return fig, correlation_matrix
+
+# Funkcja do analizy najważniejszych korelacji
+def analyze_top_correlations(correlation_matrix, threshold=0.3):
+    """
+    Analizuje i wyświetla najważniejsze korelacje
+    """
+    print("=== ANALIZA NAJWAŻNIEJSZYCH KORELACJI ===\n")
+    
+    # Znajdź pary z najwyższą korelacją
+    corr_pairs = []
+    for i in range(len(correlation_matrix.columns)):
+        for j in range(i+1, len(correlation_matrix.columns)):
+            corr_value = correlation_matrix.iloc[i, j]
+            if abs(corr_value) > threshold:
+                corr_pairs.append({
+                    'var1': correlation_matrix.columns[i],
+                    'var2': correlation_matrix.columns[j],
+                    'correlation': corr_value
+                })
+    
+    # Sortuj według wartości bezwzględnej
+    corr_pairs = sorted(corr_pairs, key=lambda x: abs(x['correlation']), reverse=True)
+    
+    print(f"Znalezione korelacje silniejsze niż {threshold}:")
+    print("-" * 60)
+    
+    for pair in corr_pairs:
+        direction = "dodatnia" if pair['correlation'] > 0 else "ujemna"
+        strength = "bardzo silna" if abs(pair['correlation']) > 0.7 else "silna" if abs(pair['correlation']) > 0.5 else "umiarkowana"
+        
+        print(f"{pair['var1']} ↔ {pair['var2']}")
+        print(f"  Korelacja: {pair['correlation']:.3f} ({direction}, {strength})")
+        print()
+    
+    if not corr_pairs:
+        print(f"Nie znaleziono korelacji silniejszych niż {threshold}")
+    
+    return corr_pairs
+
+# Przykład użycia:
+if __name__ == "__main__":
+    # Załaduj dane (zastąp właściwą ścieżką)
+    try:
+        data = pd.read_csv('petfinder.csv')
+        print("Dane załadowane pomyślnie!")
+        print(f"Kształt danych: {data.shape}")
+        print(f"Kolumny: {list(data.columns)}")
+        
+        # Utwórz wykresy korelacji dla WSZYSTKICH cech sieci
+        fig, correlation_matrix = create_correlation_plots(data)
+        
+        # Zapisz wykres
+        plt.savefig('full_network_correlation_analysis.png', dpi=300, bbox_inches='tight')
+        print("\nWykres zapisany jako 'full_network_correlation_analysis.png'")
+        
+        # Analizuj najważniejsze korelacje ze wszystkich cech
+        top_correlations = analyze_top_correlations(correlation_matrix, threshold=0.2)  # Niższy próg bo więcej cech
+        
+        # Wyświetl informacje o cechach wejściowych sieci
+        print(f"\n=== INFORMACJE O CECHACH WEJŚCIOWYCH SIECI ===")
+        feature_categories = {
+            'Podstawowe': ['Age', 'Fee', 'PhotoAmt', 'Type', 'Breed1', 'Gender', 'Color1', 'Color2', 'MaturitySize', 'FurLength', 'Vaccinated', 'Sterilized', 'Health'],
+            'Tekstowe': ['desc_length', 'word_count', 'has_contact', 'has_health_mention'],
+            'Matematyczne': ['Age_Health_Product', 'Price_Per_Photo', 'PhotoAmt_Log', 'Fee_Log'],
+            'Grupowe': ['Age_Group', 'Health_Status'],
+            'Interakcyjne': ['Age_Health_Interaction', 'Type_Gender_Interaction', 'Vacc_Ster_Interaction'],
+            'Wskaźniki': ['Is_Premium']
+        }
+        
+        for category, features in feature_categories.items():
+            available_features = [f for f in features if f in correlation_matrix.columns]
+            print(f"{category}: {len(available_features)} cech - {available_features}")
+        
+        total_features = len([col for col in correlation_matrix.columns if col != 'AdoptionSpeed'])
+        print(f"\nŁączna liczba cech wejściowych: {total_features}")
+        
+        # Wyświetl podstawowe statystyki korelacji
+        all_corr_values = []
+        for i in range(len(correlation_matrix.columns)):
+            for j in range(i+1, len(correlation_matrix.columns)):
+                all_corr_values.append(abs(correlation_matrix.iloc[i, j]))
+        
+        print(f"\n=== STATYSTYKI KORELACJI ===")
+        print(f"Średnia wartość bezwzględna korelacji: {np.mean(all_corr_values):.3f}")
+        print(f"Mediana wartości bezwzględnej korelacji: {np.median(all_corr_values):.3f}")
+        print(f"Maksymalna korelacja: {np.max(all_corr_values):.3f}")
+        print(f"Liczba korelacji > 0.5: {sum(1 for x in all_corr_values if x > 0.5)}")
+        print(f"Liczba korelacji > 0.3: {sum(1 for x in all_corr_values if x > 0.3)}")
+        
+    except FileNotFoundError:
+        print("Błąd: Nie można znaleźć pliku 'petfinder.csv'")
+        print("Upewnij się, że plik znajduje się w tym samym katalogu co skrypt.")
+    except Exception as e:
+        print(f"Wystąpił błąd: {e}")
+
+# Funkcja do szybkiego tworzenia wykresu korelacji (uproszczona wersja)
+def quick_correlation_plot(data, figsize=(12, 10)):
+    """
+    Szybka funkcja do tworzenia podstawowego wykresu korelacji
+    """
+    # Przygotuj dane
+    df_processed, _ = prepare_data_for_correlation(data)
+    
+    # Wybierz kolumny numeryczne
+    numeric_cols = df_processed.select_dtypes(include=[np.number]).columns
+    
+    # Oblicz korelację
+    correlation_matrix = df_processed[numeric_cols].corr()
+    
+    # Utwórz wykres
+    plt.figure(figsize=figsize)
+    sns.heatmap(correlation_matrix, 
+                annot=True, 
+                cmap='RdBu_r', 
+                center=0,
+                square=True,
+                fmt='.2f')
+    plt.title('Macierz Korelacji - PetFinder Dataset')
+    plt.xticks(rotation=45)
+    plt.yticks(rotation=0)
+    plt.tight_layout()
+    return correlation_matrix
