@@ -1,22 +1,11 @@
 import pandas as pd
 import numpy as np
 import tensorflow as tf
-from tensorflow import keras
+from tensorflow.keras.models import load_model
 import joblib
-import nltk
-from nltk.sentiment import SentimentIntensityAnalyzer
-import re
 import argparse
 import json
 import hashlib
-from tensorflow.keras.models import load_model
-
-# Download NLTK resources
-try:
-    nltk.download('vader_lexicon', quiet=True)
-    nltk.download('stopwords', quiet=True)
-except:
-    pass
 
 def string_to_hash_int(text, max_value=1000):
     """Convert string to integer using hash function"""
@@ -26,101 +15,6 @@ def string_to_hash_int(text, max_value=1000):
     hash_object = hashlib.md5(str(text).encode())
     hash_int = int(hash_object.hexdigest(), 16) % max_value
     return hash_int
-
-def extract_text_features(text):
-    """Extract features from the pet description text"""
-    if pd.isna(text) or text == '':
-        return {
-            'desc_length': 0,
-            'word_count': 0,
-            'sentiment_compound': 0,
-            'sentiment_pos': 0,
-            'sentiment_neg': 0,
-            'sentiment_neu': 0,
-            'has_contact': 0,
-            'has_health_mention': 0
-        }
-    
-    sia = SentimentIntensityAnalyzer()
-    
-    # Length features
-    desc_length = len(str(text))
-    word_count = len(str(text).split())
-    
-    # Sentiment analysis
-    sentiment = sia.polarity_scores(str(text))
-    
-    # Check for specific content
-    has_contact = 1 if re.search(r'\b(?:call|contact|phone|email)\b', str(text).lower()) else 0
-    has_health_mention = 1 if re.search(r'\b(?:healthy|vaccinated|neutered|spayed|dewormed)\b', str(text).lower()) else 0
-    
-    return {
-        'desc_length': desc_length,
-        'word_count': word_count,
-        'sentiment_compound': sentiment['compound'],
-        'sentiment_pos': sentiment['pos'],
-        'sentiment_neg': sentiment['neg'],
-        'sentiment_neu': sentiment['neu'],
-        'has_contact': has_contact,
-        'has_health_mention': has_health_mention
-    }
-
-def create_interaction_features_hash(df):
-    """Create interaction features using hash encoding"""
-    df_new = df.copy()
-    
-    # Create age groups
-    df_new['Age_Group'] = pd.cut(df_new['Age'], 
-                                bins=[0, 3, 12, 36, 72, float('inf')], 
-                                labels=['Baby', 'Young', 'Adult', 'Middle', 'Senior'])
-    
-    # Create health status groups
-    df_new['Health_Status'] = df_new['Health']
-    
-    # Create interaction features
-    interaction_combinations = [
-        ('Vaccinated', 'Sterilized'),
-        ('MaturitySize', 'FurLength'),
-        ('Type', 'Breed1'),
-        ('Color1', 'Color2'),
-        ('Gender', 'MaturitySize'),
-        ('Age_Group', 'Health_Status')
-    ]
-    
-    for col1, col2 in interaction_combinations:
-        if col1 in df_new.columns and col2 in df_new.columns:
-            interaction_name = f'{col1}_{col2}_hash'
-            combined = df_new[col1].astype(str) + '_' + df_new[col2].astype(str)
-            df_new[interaction_name] = combined.apply(lambda x: string_to_hash_int(x, 1000))
-    
-    return df_new
-
-def prepare_all_features(df):
-    """Prepare all features including text features, interactions, and transformations"""
-    # Extract text features from Description
-    if 'Description' in df.columns:
-        text_features = df['Description'].apply(extract_text_features).apply(pd.Series)
-        df = pd.concat([df, text_features], axis=1)
-    
-    # Create basic mathematical features
-    df['Age_Health_Product'] = df['Age'] * pd.to_numeric(df['Health'], errors='coerce').fillna(1)
-    df['Price_Per_Photo'] = df['Fee'] / (df['PhotoAmt'] + 1)
-    df['PhotoAmt_Log'] = np.log1p(df['PhotoAmt'])
-    df['Fee_Log'] = np.log1p(df['Fee'])
-    
-    # Create categorical groupings before hashing
-    df = create_interaction_features_hash(df)
-    
-    # Create premium indicator
-    health_numeric = pd.to_numeric(df['Health'], errors='coerce').fillna(0)
-    vaccinated_numeric = pd.to_numeric(df['Vaccinated'], errors='coerce').fillna(0)
-    sterilized_numeric = pd.to_numeric(df['Sterilized'], errors='coerce').fillna(0)
-    
-    df['Is_Premium'] = ((health_numeric == 1) & 
-                        (vaccinated_numeric == 1) & 
-                        (sterilized_numeric == 1)).astype(int)
-    
-    return df
 
 def apply_hash_encoding_with_mappings(df, hash_mappings, categorical_columns):
     """Apply hash encoding using saved mappings from training"""
@@ -159,15 +53,9 @@ def preprocess_input_for_prediction(input_data, components):
         if col in df.columns:
             df[col] = df[col].fillna('Unknown')
     
-    if 'Description' in df.columns:
-        df['Description'] = df['Description'].fillna('')
-    
-    # Apply same feature engineering as training
-    df_processed = prepare_all_features(df)
-    
     # Apply hash encoding using saved mappings
     df_encoded = apply_hash_encoding_with_mappings(
-        df_processed, 
+        df, 
         components['hash_mappings'], 
         components['categorical_columns']
     )
@@ -188,11 +76,11 @@ def preprocess_input_for_prediction(input_data, components):
     
     return X_scaled
 
-def predict_adoption_speed_hash(input_data, 
-                               model_path='best_hash_model.h5',
-                               components_path='hash_preprocessing_components.joblib',
-                               metadata_path='hash_model_metadata.joblib'):
-    """Predict adoption speed using hash-encoded model"""
+def predict_adoption_speed(input_data, 
+                          model_path='best_model_simplified.h5',
+                          components_path='preprocessing_components_simplified.joblib',
+                          metadata_path='model_metadata_simplified.joblib'):
+    """Predict adoption speed using simplified model"""
     # Load all components
     model = load_model(model_path)
     components = joblib.load(components_path)
@@ -224,11 +112,11 @@ def predict_adoption_speed_hash(input_data,
     
     return result
 
-def batch_predict_hash(input_file, output_file,
-                      model_path='best_hash_model.h5',
-                      components_path='hash_preprocessing_components.joblib',
-                      metadata_path='hash_model_metadata.joblib'):
-    """Make batch predictions from CSV file using hash model"""
+def batch_predict(input_file, output_file,
+                 model_path='best_model_simplified.h5',
+                 components_path='preprocessing_components_simplified.joblib',
+                 metadata_path='model_metadata_simplified.joblib'):
+    """Make batch predictions from CSV file"""
     # Read input data
     input_df = pd.read_csv(input_file)
     print(f"Loaded {len(input_df)} rows for prediction")
@@ -237,7 +125,7 @@ def batch_predict_hash(input_file, output_file,
     predictions = []
     for i, row in input_df.iterrows():
         try:
-            pred = predict_adoption_speed_hash(
+            pred = predict_adoption_speed(
                 row.to_dict(), model_path, components_path, metadata_path
             )
             predictions.append(pred)
@@ -268,7 +156,7 @@ def batch_predict_hash(input_file, output_file,
     print(f"Predictions saved to {output_file}")
 
 def main():
-    parser = argparse.ArgumentParser(description='Predict pet adoption speed using hash model')
+    parser = argparse.ArgumentParser(description='Predict pet adoption speed')
     
     subparsers = parser.add_subparsers(dest='command', help='Command to run')
     
@@ -287,7 +175,6 @@ def main():
     single_parser.add_argument('--health', required=True, help='Health condition')
     single_parser.add_argument('--fee', type=float, required=True, help='Adoption fee')
     single_parser.add_argument('--photos', type=int, required=True, help='Number of photos')
-    single_parser.add_argument('--description', default='', help='Pet description')
     
     # Batch prediction
     batch_parser = subparsers.add_parser('batch', help='Make batch predictions from CSV')
@@ -296,10 +183,10 @@ def main():
     
     # Model paths (optional)
     for p in [single_parser, batch_parser]:
-        p.add_argument('--model', default='best_hash_model.h5', help='Path to model file')
-        p.add_argument('--components', default='hash_preprocessing_components.joblib', 
+        p.add_argument('--model', default='best_model_simplified.h5', help='Path to model file')
+        p.add_argument('--components', default='preprocessing_components_simplified.joblib', 
                       help='Path to preprocessing components')
-        p.add_argument('--metadata', default='hash_model_metadata.joblib', 
+        p.add_argument('--metadata', default='model_metadata_simplified.joblib', 
                       help='Path to metadata file')
     
     args = parser.parse_args()
@@ -319,12 +206,11 @@ def main():
             'Sterilized': args.sterilized,
             'Health': args.health,
             'Fee': args.fee,
-            'PhotoAmt': args.photos,
-            'Description': args.description
+            'PhotoAmt': args.photos
         }
         
         # Make prediction
-        result = predict_adoption_speed_hash(
+        result = predict_adoption_speed(
             input_data, args.model, args.components, args.metadata
         )
         
@@ -332,7 +218,7 @@ def main():
         print(json.dumps(result, indent=2))
         
     elif args.command == 'batch':
-        batch_predict_hash(
+        batch_predict(
             args.input, args.output, 
             args.model, args.components, args.metadata
         )
@@ -340,7 +226,7 @@ def main():
         parser.print_help()
 
 def example_prediction():
-    """Example of how to use the hash prediction function"""
+    """Example of how to use the prediction function"""
     example_pet = {
         'Type': 'Dog',
         'Age': 12,
@@ -354,12 +240,11 @@ def example_prediction():
         'Sterilized': 'Yes',
         'Health': 'Healthy',
         'Fee': 250.0,
-        'PhotoAmt': 5,
-        'Description': 'Friendly and healthy dog, loves to play with children. Fully vaccinated and neutered.'
+        'PhotoAmt': 5
     }
     
     try:
-        result = predict_adoption_speed_hash(example_pet)
+        result = predict_adoption_speed(example_pet)
         print("Example prediction:")
         print(json.dumps(result, indent=2))
         return result
